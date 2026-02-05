@@ -9,6 +9,7 @@ import (
 	"log"
 	"net"
 	"net/http"
+	"net/netip"
 	"net/url"
 	"os"
 	"os/signal"
@@ -41,12 +42,35 @@ func getLocalIP() string {
 	if err != nil {
 		return "localhost"
 	}
+
+	var fallback string
 	for _, addr := range addrs {
 		if ipnet, ok := addr.(*net.IPNet); ok && !ipnet.IP.IsLoopback() {
-			if ipnet.IP.To4() != nil {
-				return ipnet.IP.String()
+			if ip := ipnet.IP.To4(); ip != nil {
+				parsedIP, parseErr := netip.ParseAddr(ip.String())
+				if parseErr != nil {
+					continue
+				}
+
+				// avoid link-local addresses (169.254.x.x), which are typically
+				// unreachable from phones on the same Wi-Fi network.
+				if parsedIP.IsLinkLocalUnicast() {
+					continue
+				}
+
+				if parsedIP.IsPrivate() {
+					return ip.String()
+				}
+
+				if fallback == "" {
+					fallback = ip.String()
+				}
 			}
 		}
+	}
+
+	if fallback != "" {
+		return fallback
 	}
 	return "localhost"
 }
@@ -347,6 +371,8 @@ func updateDisplay() {
 			WhiteChar: qrterminal.WHITE,
 			QuietZone: 0,
 		})
+		fmt.Printf("\nConnection URL: %s\n", httpURL)
+		fmt.Println("If your camera cannot detect the QR code, open the URL manually on your phone browser.")
 		fmt.Println("\nPress Ctrl+C to exit")
 		if *logFlag {
 			fmt.Printf("Physics running: %t\n", physicsRunning)
